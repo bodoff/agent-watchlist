@@ -48,11 +48,11 @@
   <div id="content"></div>
   <footer>
     Watch-first learning dashboard · quotes via Yahoo Finance, delayed up to ~15 minutes ·
-    refreshes every 60s · educational, not investment advice · no orders can be placed from this page.
+    updated ~every 15 min during market hours · educational, not investment advice · no orders can be placed from this page.
   </footer>
 </div>
 <script>
-var API = "https://talgidlwdytjdxkdmhxh.supabase.co/functions/v1/watchlist?api=quotes";
+var API = "./quotes.json";
 var CONFIG = [
   { "t": "VOO", "name": "Vanguard S&P 500 ETF", "group": "Benchmarks", "note": "The S&P 500 — the baseline every other move gets compared to." },
   { "t": "VTI", "name": "Vanguard Total Market ETF", "group": "Benchmarks", "note": "Total US market — watch how little it diverges from VOO." },
@@ -137,7 +137,7 @@ function render(data) {
 }
 
 function load() {
-  fetch(API)
+  fetch(API + "?t=" + Date.now())
     .then(function (r) { return r.json(); })
     .then(render)
     .catch(function () {
