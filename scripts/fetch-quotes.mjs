@@ -1,27 +1,64 @@
-// Fetches delayed quotes from Yahoo Finance and writes quotes.json for the dashboard.
+// Fetches delayed quotes + daily history from Stooq and writes quotes.json for the dashboard.
+// price/prevClose: Stooq delayed quote endpoint; spark: last 30 daily closes; 52wk range: last 252 trading days.
 import { writeFileSync } from "node:fs";
 
 const SYMBOLS = ["VOO", "VTI", "NVDA", "MSFT", "COST", "JPM", "BAH", "ACGL", "SFM"];
-const UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+const UA = "Mozilla/5.0 (compatible; agent-watchlist/1.0)";
+
+async function getText(url) {
+  const r = await fetch(url, { headers: { "User-Agent": UA } });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.text();
+}
+
+// Batch delayed quotes: Symbol,Date,Time,Open,High,Low,Close,Volume
+const quoteCsv = await getText(
+  `https://stooq.com/q/l/?s=${SYMBOLS.map((s) => s.toLowerCase() + ".us").join(",")}&f=sd2t2ohlcv&h&e=csv`,
+);
+const live = {};
+for (const line of quoteCsv.trim().split("\n").slice(1)) {
+  const [sym, date, , , , , close] = line.split(",");
+  if (!sym || close === "N/D") continue;
+  live[sym.replace(".US", "")] = { price: parseFloat(close), date };
+}
 
 const out = { updated: Date.now(), results: [] };
 
 for (const t of SYMBOLS) {
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=5m&range=1d&includePrePost=false`;
-    const r = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" } });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const j = await r.json();
-    const res = j?.chart?.result?.[0];
-    const meta = res?.meta ?? {};
-    const spark = (res?.indicators?.quote?.[0]?.close ?? []).filter((x) => x != null);
+    const hist = await getText(`https://stooq.com/q/d/l/?s=${t.toLowerCase()}.us&i=d`);
+    const rows = hist
+      .trim()
+      .split("\n")
+      .slice(1)
+      .map((l) => l.split(","))
+      .filter((c) => c.length >= 5 && c[4] !== "N/D")
+      .slice(-252); // ~1 trading year
+    if (!rows.length) throw new Error("no history");
+    const closes = rows.map((c) => parseFloat(c[4]));
+    const highs = rows.map((c) => parseFloat(c[2]));
+    const lows = rows.map((c) => parseFloat(c[3]));
+    const lastHistDate = rows[rows.length - 1][0];
+
+    const lv = live[t];
+    const price = lv?.price ?? closes[closes.length - 1];
+    // If history already includes the live-quote date, previous close is one row back.
+    const prevClose =
+      lv && lastHistDate === lv.date && closes.length > 1
+        ? closes[closes.length - 2]
+        : closes[closes.length - 1] === price && closes.length > 1
+          ? closes[closes.length - 2]
+          : closes[closes.length - 1];
+
+    let spark = closes.slice(-30);
+    if (lv && lastHistDate !== lv.date) spark = [...spark.slice(1), lv.price];
+
     out.results.push({
       symbol: t,
-      price: meta.regularMarketPrice ?? (spark.length ? spark[spark.length - 1] : null),
-      prevClose: meta.chartPreviousClose ?? meta.previousClose ?? null,
-      high52: meta.fiftyTwoWeekHigh ?? null,
-      low52: meta.fiftyTwoWeekLow ?? null,
+      price,
+      prevClose,
+      high52: Math.max(...highs),
+      low52: Math.min(...lows),
       spark,
     });
   } catch (e) {
