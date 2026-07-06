@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🔭 Agent Watchlist</title>
+<style>
+  :root {
+    --bg: #0e1117; --card: #161b22; --border: #21262d;
+    --text: #e6edf3; --muted: #8b949e; --up: #3fb950; --down: #f85149;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 24px 16px 48px; }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  h1 { font-size: 22px; font-weight: 650; }
+  .status { font-size: 13px; color: var(--muted); }
+  .status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; background: var(--muted); }
+  .status.open .dot { background: var(--up); }
+  .sub { font-size: 13px; color: var(--muted); margin-bottom: 22px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 26px 0 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .row1 { display: flex; justify-content: space-between; align-items: baseline; }
+  .tick { font-size: 16px; font-weight: 700; }
+  .nm { font-size: 12px; color: var(--muted); margin-left: 6px; }
+  .px { font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .row2 { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+  .chg { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .chg.up { color: var(--up); } .chg.down { color: var(--down); }
+  .spark { flex: 0 0 110px; height: 32px; }
+  .range { margin-top: 10px; }
+  .range .track { position: relative; height: 4px; border-radius: 2px; background: var(--border); }
+  .range .pin { position: absolute; top: -3px; width: 10px; height: 10px; border-radius: 50%; background: var(--text); transform: translateX(-50%); }
+  .range .lbl { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .note { font-size: 12px; color: var(--muted); line-height: 1.45; margin-top: 10px; }
+  .err { color: var(--down); font-size: 13px; }
+  footer { margin-top: 36px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🔭 Agent Watchlist</h1>
+    <span class="status" id="mkt"><span class="dot"></span><span id="mktTxt">…</span></span>
+  </header>
+  <div class="sub" id="updated">Loading quotes…</div>
+  <div id="content"></div>
+  <footer>
+    Watch-first learning dashboard · quotes via Yahoo Finance, delayed up to ~15 minutes ·
+    refreshes every 60s · educational, not investment advice · no orders can be placed from this page.
+  </footer>
+</div>
+<script>
+var API = "https://talgidlwdytjdxkdmhxh.supabase.co/functions/v1/watchlist?api=quotes";
+var CONFIG = [
+  { "t": "VOO", "name": "Vanguard S&P 500 ETF", "group": "Benchmarks", "note": "The S&P 500 — the baseline every other move gets compared to." },
+  { "t": "VTI", "name": "Vanguard Total Market ETF", "group": "Benchmarks", "note": "Total US market — watch how little it diverges from VOO." },
+  { "t": "NVDA", "name": "NVIDIA", "group": "Quality Large-Caps", "note": "The AI bellwether. Hyperscaler capex (~$754B this year) lands here first." },
+  { "t": "MSFT", "name": "Microsoft", "group": "Quality Large-Caps", "note": "Down ~30% from its high — a live lesson in great company vs. great price." },
+  { "t": "COST", "name": "Costco", "group": "Quality Large-Caps", "note": "Excellent business at ~48x earnings — watch expensive quality in a wobble." },
+  { "t": "JPM", "name": "JPMorgan Chase", "group": "Quality Large-Caps", "note": "The finance bellwether — banks tell you what the economy is doing." },
+  { "t": "BAH", "name": "Booz Allen Hamilton", "group": "Diamonds in the Rough", "note": "Down ~48% on federal spending cuts; P/E ~9, ~3.7% dividend. Temporary or structural?" },
+  { "t": "ACGL", "name": "Arch Capital", "group": "Diamonds in the Rough", "note": "Specialty insurer under 8x earnings — insurers always look cheap; does it matter here?" },
+  { "t": "SFM", "name": "Sprouts Farmers Market", "group": "Diamonds in the Rough", "note": "Growth grocer cut in half from $171 — what happens after a multiple collapses." }
+];
+var GROUPS = ["Benchmarks", "Quality Large-Caps", "Diamonds in the Rough"];
+
+function fmt(n, d) {
+  if (n == null || isNaN(n)) return "—";
+  return n.toLocaleString("en-US", { minimumFractionDigits: d == null ? 2 : d, maximumFractionDigits: d == null ? 2 : d });
+}
+
+function sparkSvg(pts, up) {
+  if (!pts || pts.length < 2) return "";
+  var min = Math.min.apply(null, pts), max = Math.max.apply(null, pts);
+  var span = (max - min) || 1;
+  var w = 110, h = 32, step = w / (pts.length - 1);
+  var d = "";
+  for (var i = 0; i < pts.length; i++) {
+    var x = (i * step).toFixed(1);
+    var y = (h - 3 - ((pts[i] - min) / span) * (h - 6)).toFixed(1);
+    d += (i ? "L" : "M") + x + "," + y;
+  }
+  var color = up ? "#3fb950" : "#f85149";
+  return '<svg class="spark" viewBox="0 0 110 32" preserveAspectRatio="none">' +
+    '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.6"/></svg>';
+}
+
+function card(cfg, q) {
+  var html = '<div class="card"><div class="row1"><div><span class="tick">' + cfg.t +
+    '</span><span class="nm">' + cfg.name + "</span></div>";
+  if (!q || q.error || q.price == null) {
+    html += '</div><div class="err">quote unavailable</div><div class="note">' + cfg.note + "</div></div>";
+    return html;
+  }
+  var chg = q.prevClose ? q.price - q.prevClose : null;
+  var pct = chg != null && q.prevClose ? (chg / q.prevClose) * 100 : null;
+  var up = (chg || 0) >= 0;
+  html += '<span class="px">$' + fmt(q.price) + "</span></div>";
+  html += '<div class="row2"><span class="chg ' + (up ? "up" : "down") + '">' +
+    (chg == null ? "—" : (up ? "+" : "") + fmt(chg) + " (" + (up ? "+" : "") + fmt(pct) + "%)") +
+    "</span>" + sparkSvg(q.spark, up) + "</div>";
+  if (q.low52 != null && q.high52 != null && q.high52 > q.low52) {
+    var pos = Math.min(100, Math.max(0, ((q.price - q.low52) / (q.high52 - q.low52)) * 100));
+    html += '<div class="range"><div class="track"><div class="pin" style="left:' + pos.toFixed(1) +
+      '%"></div></div><div class="lbl"><span>52w low $' + fmt(q.low52) +
+      "</span><span>52w high $" + fmt(q.high52) + "</span></div></div>";
+  }
+  html += '<div class="note">' + cfg.note + "</div></div>";
+  return html;
+}
+
+function marketOpen() {
+  var et = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+  var d = et.getDay(), m = et.getHours() * 60 + et.getMinutes();
+  return d >= 1 && d <= 5 && m >= 570 && m < 960;
+}
+
+function render(data) {
+  var bySym = {};
+  (data.results || []).forEach(function (r) { bySym[r.symbol] = r; });
+  var html = "";
+  GROUPS.forEach(function (g) {
+    html += "<h2>" + g + '</h2><div class="grid">';
+    CONFIG.filter(function (c) { return c.group === g; }).forEach(function (c) {
+      html += card(c, bySym[c.t]);
+    });
+    html += "</div>";
+  });
+  document.getElementById("content").innerHTML = html;
+  document.getElementById("updated").textContent =
+    "Updated " + new Date(data.updated).toLocaleTimeString() + " · prices vs. previous close";
+  var open = marketOpen();
+  document.getElementById("mkt").className = "status" + (open ? " open" : "");
+  document.getElementById("mktTxt").textContent = open ? "Market open (regular hours)" : "Market closed";
+}
+
+function load() {
+  fetch(API)
+    .then(function (r) { return r.json(); })
+    .then(render)
+    .catch(function () {
+      document.getElementById("updated").textContent = "Could not load quotes — will retry.";
+    });
+}
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
